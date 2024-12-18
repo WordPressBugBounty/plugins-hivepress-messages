@@ -73,6 +73,9 @@ final class Message extends Component {
 			add_filter( 'hivepress/v1/templates/vendor_view_block', [ $this, 'alter_vendor_view_block' ] );
 			add_filter( 'hivepress/v1/templates/vendor_view_page', [ $this, 'alter_vendor_view_page' ] );
 
+			add_filter( 'hivepress/v1/templates/user_view_block', [ $this, 'alter_user_view_block' ] );
+			add_filter( 'hivepress/v1/templates/user_view_page', [ $this, 'alter_user_view_page' ] );
+
 			if ( hivepress()->get_version( 'marketplace' ) ) {
 				add_filter( 'hivepress/v1/templates/order_footer_block', [ $this, 'alter_order_footer_block' ] );
 			}
@@ -463,18 +466,57 @@ final class Message extends Component {
 
 		if ( $message ) {
 
-			// Get classes.
+			// Get CSS classes.
 			$classes = [];
-
-			if ( $recipient && $message->get_sender__id() === $recipient->get_id() ) {
-				$classes[] = 'hp-message--sent';
-			}
 
 			if ( $message->is_read() ) {
 				$classes[] = 'hp-message--read';
 			}
 
-			// Set attributes.
+			if ( $recipient ) {
+				if ( $message->get_sender__id() === $recipient->get_id() ) {
+					$classes[] = 'hp-message--sent';
+				}
+
+				if ( current_user_can( 'manage_options' ) || ( get_option( 'hp_message_allow_deletion' ) && get_current_user_id() === $message->get_sender__id() ) ) {
+
+					// Add delete link.
+					$blocks = hp\merge_trees(
+						[ 'blocks' => $blocks ],
+						[
+							'blocks' => [
+								'message_header' => [
+									'blocks' => [
+										'message_delete_modal' => [
+											'type'        => 'modal',
+											'model'       => 'message',
+											'title'       => esc_html__( 'Delete Message', 'hivepress-messages' ),
+											'_capability' => 'read',
+											'_order'      => 5,
+
+											'blocks'      => [
+												'message_delete_form' => [
+													'type' => 'form',
+													'form' => 'message_delete',
+													'_order' => 10,
+												],
+											],
+										],
+
+										'message_delete_link'  => [
+											'type'   => 'part',
+											'path'   => 'message/view/message-delete-link',
+											'_order' => 5,
+										],
+									],
+								],
+							],
+						]
+					)['blocks'];
+				}
+			}
+
+			// Add HTML attributes.
 			$blocks = hp\merge_trees(
 				[ 'blocks' => $blocks ],
 				[
@@ -644,6 +686,86 @@ final class Message extends Component {
 							'message_send_link'  => [
 								'type'   => 'part',
 								'path'   => 'vendor/view/page/message-send-link',
+								'_order' => 10,
+							],
+						],
+					],
+				],
+			]
+		);
+	}
+
+	/**
+	 * Alters user view block.
+	 *
+	 * @param array $template Template arguments.
+	 * @return array
+	 */
+	public function alter_user_view_block( $template ) {
+		return hp\merge_trees(
+			$template,
+			[
+				'blocks' => [
+					'user_actions_primary' => [
+						'blocks' => [
+							'message_send_modal' => [
+								'type'        => 'modal',
+								'model'       => 'user',
+								'title'       => hivepress()->translator->get_string( 'send_message' ),
+								'_capability' => 'read',
+								'_order'      => 5,
+
+								'blocks'      => [
+									'message_send_form' => [
+										'type'   => 'message_send_form',
+										'_order' => 10,
+									],
+								],
+							],
+
+							'message_send_link'  => [
+								'type'   => 'part',
+								'path'   => 'user/view/block/message-send-link',
+								'_order' => 10,
+							],
+						],
+					],
+				],
+			]
+		);
+	}
+
+	/**
+	 * Alters user view page.
+	 *
+	 * @param array $template Template arguments.
+	 * @return array
+	 */
+	public function alter_user_view_page( $template ) {
+		return hp\merge_trees(
+			$template,
+			[
+				'blocks' => [
+					'user_actions_primary' => [
+						'blocks' => [
+							'message_send_modal' => [
+								'type'        => 'modal',
+								'model'       => 'user',
+								'title'       => hivepress()->translator->get_string( 'send_message' ),
+								'_capability' => 'read',
+								'_order'      => 5,
+
+								'blocks'      => [
+									'message_send_form' => [
+										'type'   => 'message_send_form',
+										'_order' => 10,
+									],
+								],
+							],
+
+							'message_send_link'  => [
+								'type'   => 'part',
+								'path'   => 'user/view/page/message-send-link',
 								'_order' => 10,
 							],
 						],

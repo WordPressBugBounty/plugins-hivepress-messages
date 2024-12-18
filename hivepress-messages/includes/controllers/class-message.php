@@ -32,19 +32,40 @@ final class Message extends Controller {
 		$args = hp\merge_arrays(
 			[
 				'routes' => [
-					'messages_resource'    => [
+					'messages_resource'     => [
 						'path' => '/messages',
 						'rest' => true,
 					],
 
-					'message_send_action'  => [
+					'message_resource'      => [
+						'base' => 'messages_resource',
+						'path' => '/(?P<message_id>\d+)',
+						'rest' => true,
+					],
+
+					'message_send_action'   => [
 						'base'   => 'messages_resource',
 						'method' => 'POST',
 						'action' => [ $this, 'send_message' ],
 						'rest'   => true,
 					],
 
-					'messages_thread_page' => [
+					'message_delete_action' => [
+						'base'   => 'message_resource',
+						'method' => 'DELETE',
+						'action' => [ $this, 'delete_message' ],
+						'rest'   => true,
+					],
+
+					'messages_read_action'  => [
+						'base'   => 'messages_resource',
+						'path'   => '/read',
+						'method' => 'GET',
+						'action' => [ $this, 'read_messages' ],
+						'rest'   => true,
+					],
+
+					'messages_thread_page'  => [
 						'title'    => hivepress()->translator->get_string( 'messages' ),
 						'base'     => 'user_account_page',
 						'path'     => '/messages',
@@ -52,7 +73,7 @@ final class Message extends Controller {
 						'action'   => [ $this, 'render_messages_thread_page' ],
 					],
 
-					'messages_view_page'   => [
+					'messages_view_page'    => [
 						'base'     => 'messages_thread_page',
 						'path'     => '/(?P<user_id>\d+)/?(?P<recipient_id>\d+)?',
 						'title'    => [ $this, 'get_messages_view_title' ],
@@ -220,12 +241,164 @@ final class Message extends Controller {
 			) )->send();
 		}
 
-		return hp\rest_response(
-			201,
+		// Set response.
+		$response = [
+			'id' => $message->get_id(),
+		];
+
+		if ( $request->get_param( '_render' ) ) {
+
+			// Fetch message.
+			$message = Models\Message::query()->get_by_id( $message->get_id() );
+
+			if ( $message ) {
+
+				// Render message.
+				$response['html'] = '<div class="hp-grid__item">';
+
+				$response['html'] .= ( new Blocks\Template(
+					[
+						'template' => 'message_view_block',
+
+						'context'  => [
+							'message'   => $message,
+							'recipient' => $sender,
+						],
+					]
+				) )->render();
+
+				$response['html'] .= '</div>';
+			}
+		}
+
+		return hp\rest_response( 201, $response );
+	}
+
+	/**
+	 * Deletes message.
+	 *
+	 * @param WP_REST_Request $request API request.
+	 * @return WP_Rest_Response
+	 */
+	public function delete_message( $request ) {
+
+		// Check authentication.
+		if ( ! is_user_logged_in() ) {
+			return hp\rest_error( 401 );
+		}
+
+		// Get message.
+		$message = Models\Message::query()->get_by_id( $request->get_param( 'message_id' ) );
+
+		if ( ! $message ) {
+			return hp\rest_error( 404 );
+		}
+
+		// Check permissions.
+		if ( ! current_user_can( 'manage_options' ) && ( ! get_option( 'hp_message_allow_deletion' ) || get_current_user_id() !== $message->get_sender__id() ) ) {
+			return hp\rest_error( 403 );
+		}
+
+		// Delete message.
+		if ( ! $message->delete() ) {
+			return hp\rest_error( 400 );
+		}
+
+		return hp\rest_response( 204 );
+	}
+
+	/**
+	 * Reads messages.
+	 *
+	 * @param WP_REST_Request $request API request.
+	 * @return WP_Rest_Response
+	 */
+	public function read_messages( $request ) {
+
+		// Check authentication.
+		if ( ! is_user_logged_in() ) {
+			return hp\rest_error( 401 );
+		}
+
+		// Get recipient.
+		$recipient_id = absint( $request->get_param( 'recipient' ) );
+
+		if ( get_current_user_id() !== $recipient_id ) {
+			return hp\rest_error( 403 );
+		}
+
+		$recipient = Models\User::query()->get_by_id( $recipient_id );
+
+		if ( ! $recipient ) {
+			return hp\rest_error( 404 );
+		}
+
+		// Get sender.
+		$sender_id = absint( $request->get_param( 'sender' ) );
+
+		if ( ! $sender_id || $sender_id === $recipient_id ) {
+			return hp\rest_error( 400 );
+		}
+
+		$sender = Models\User::query()->get_by_id( $sender_id );
+
+		if ( ! $sender ) {
+			return hp\rest_error( 404 );
+		}
+
+		// Get messages.
+		$messages = Models\Message::query()->filter(
 			[
-				'id' => $message->get_id(),
+				'sender'    => $sender->get_id(),
+				'recipient' => $recipient->get_id(),
+				'read'      => 0,
 			]
-		);
+		)->order( [ 'sent_date' => 'asc' ] )
+		->get()
+		->serialize();
+
+		// Set response.
+		$response = [
+			'results' => [],
+		];
+
+		if ( $messages ) {
+			foreach ( $messages as $message ) {
+
+				// Add result.
+				$response['results'][] = [
+					'id' => $message->get_id(),
+				];
+
+				// Update message.
+				$message->set_read( 1 )->save_read();
+			}
+
+			if ( $request->get_param( '_render' ) ) {
+
+				// Render messages.
+				$response['html'] = '';
+
+				foreach ( $messages as $message ) {
+					$response['html'] .= '<div class="hp-grid__item">';
+
+					$response['html'] .= ( new Blocks\Template(
+						[
+							'template' => 'message_view_block',
+
+							'context'  => [
+								'message'   => $message,
+								'recipient' => $recipient,
+							],
+						]
+					) )->render();
+
+					$response['html'] .= '</div>';
+				}
+			}
+		}
+
+		return hp\rest_response( 200, $response );
 	}
 
 	/**
@@ -485,6 +658,7 @@ final class Message extends Controller {
 
 				'context'  => [
 					'messages'  => $messages,
+					'sender'    => hivepress()->request->get_context( 'message_sender' ),
 					'recipient' => hivepress()->request->get_context( 'message_recipient' ),
 				],
 			]
